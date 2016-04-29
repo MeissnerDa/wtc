@@ -8,6 +8,7 @@ using System.IO.Compression;
 using System.Diagnostics;
 using CommandLine;
 using CommandLine.Text;
+using System.Xml;
 
 // wtc -d \\server\share\documents -o \\oldserver\share\templates\ -n \\server\share\templates\ -r
 
@@ -57,7 +58,8 @@ namespace WTC
     class Program
     {
 
-        public static string tempDir = Path.GetTempPath() + "_wtc_";
+        public static string tempDir = Path.GetTempPath() + "_wtc_\\";
+        public static string templateRelationshipInd = "relationships/attachedTemplate";
 
         static int Main(string[] args)
         {
@@ -97,6 +99,21 @@ namespace WTC
                 Stopwatch stopWatch = new Stopwatch();
                 stopWatch.Start();
 
+                //check if temp folder exists
+                if (Directory.Exists(tempDir))
+                {
+                    //Delete Temp Folder
+                    Directory.Delete(tempDir, true);
+                }
+
+                // Check if backup directory exists, if not create it.
+                string backupDir = options.Directory + "\\backups\\";
+
+                if (!Directory.Exists(backupDir))
+                {
+                    Directory.CreateDirectory(backupDir);
+                }
+
                 var so = SearchOption.TopDirectoryOnly;
                 if (options.Recursive)
                 {
@@ -125,7 +142,7 @@ namespace WTC
                     // lets try to correct the document
                     try
                     {
-                        changed = correctDocument(file, options.Old, options.New, options.NoBackup, options.DryRun);
+                        changed = correctDocument(file, options.Old, options.New, options.Directory, options.NoBackup, options.DryRun);
                     }
                     catch (Exception e)
                     {
@@ -216,7 +233,7 @@ namespace WTC
         /// <param name="makeBackup">create backup file for every corrected document</param>
         /// <param name="dryRun">if true the original file will not be changed</param>
         /// <returns>file is changed or affected</returns>
-        static bool correctDocument(string file, string oldPath, string newPath,  bool noBackup, bool dryRun)
+        static bool correctDocument(string file, string oldPath, string newPath, string templatePath,  bool noBackup, bool dryRun)
         {
 
             bool changed = false;
@@ -232,12 +249,6 @@ namespace WTC
                 string settingsFilePath = tempUnzipDir + @"\word\_rels\settings.xml.rels";
                 if (File.Exists(settingsFilePath))
                 {
-                    string oldContent = File.ReadAllText(settingsFilePath);
-                    string newContent = oldContent.Replace(oldPath, newPath); // replace
-
-                    // something changed?
-                    if (oldContent != newContent)
-                    {
                         // check for DryRun
                         if (dryRun)
                         {
@@ -245,14 +256,81 @@ namespace WTC
                         }
                         else
                         {
+                            XmlDocument doc = new XmlDocument();
+                            doc.Load(settingsFilePath);
 
-                            File.WriteAllText(settingsFilePath, newContent);
-                            changed = true;
+                            XmlNamespaceManager nsmgr = new XmlNamespaceManager(doc.NameTable);
+                            nsmgr.AddNamespace("ns", "http://schemas.openxmlformats.org/package/2006/relationships");
 
-                            // save original file
+                            var nodes = doc.SelectNodes("//ns:Relationship", nsmgr);
+
+                            //check if there are multiple nodes, replace path if type == templateRelationshipInd and currentPath == oldPath
+                            if (nodes.Count > 1)
+                            {
+                                try
+                                {
+                                    changed = false;
+                                    foreach (XmlNode currentNote in nodes)
+                                    {
+                                        string currentNoteType = currentNote.Attributes["Type"].InnerText;
+                                        string currentNotePath = currentNote.Attributes["Target"].InnerText;
+
+                                        if (currentNotePath == oldPath && currentNoteType.Contains(templateRelationshipInd))
+                                        {
+                                            currentNote.Attributes["Target"].InnerText = newPath;
+                                            changed = true;
+                                        }
+                                    }
+
+                                    doc.Save(settingsFilePath);                                    
+                                }
+                                catch (Exception ex)
+                                {
+                                    changed = false;
+                                    Console.WriteLine("An error occured trying to change the template path: " + ex.Message);
+                                }
+                            }
+                            else
+                            {
+                                try
+                                {
+                                    string currentPath = nodes[0].Attributes["Target"].InnerText;
+                                    string currentType = nodes[0].Attributes["Type"].InnerText;
+
+                                    if (currentPath == oldPath && currentType.Contains(templateRelationshipInd))
+                                    {
+                                        nodes[0].Attributes["Target"].InnerText = newPath;
+
+                                        doc.Save(settingsFilePath);
+
+                                        changed = true;
+                                    }
+                                }
+                                catch (Exception ex)
+                                {
+                                    changed = false;
+                                    Console.WriteLine("An error occured trying to change the template path: " + ex.Message);
+                                }
+                            }
+                            
+
+                            // backup original file
                             try
                             {
-                                File.Move(file, file + ".bak");
+                                string backupDir = templatePath + "\\backups\\";
+                                string fileName = Path.GetFileName(file);
+
+                                // Check if old backup exists, delete old backup, create new backup
+                                if (File.Exists(backupDir + fileName + ".bak"))
+                                {
+                                    File.Delete(backupDir + fileName + ".bak");
+                                    File.Move(file, backupDir + fileName + ".bak");
+                                }
+                                else
+                                {
+                                    File.Move(file, backupDir + fileName + ".bak");
+                                }
+                                    
 
                                 // Re-Zip files to docx
                                 try
@@ -262,7 +340,7 @@ namespace WTC
                                     // delete backup file if wanted
                                     if (noBackup)
                                     {
-                                        File.Delete(file + ".bak");
+                                        File.Delete(backupDir + fileName + ".bak");
                                     }
                                 }
                                 catch (Exception e2)
@@ -270,25 +348,24 @@ namespace WTC
                                     // undo rename
                                     try
                                     {
-                                        File.Move(file + ".bak", file);
+                                        File.Move(backupDir + fileName + ".bak", file);
                                     }
                                     catch (Exception e4)
                                     {
-                                        WTCException wtcEx4 = new WTCException("failed to remove backup file", e4);
+                                        WTCException wtcEx4 = new WTCException("failed to remove backup file: " + e4.Message, e4);
                                         throw wtcEx4;
                                     }
 
-                                    WTCException wtcEx2 = new WTCException("failed to rezip", e2);
+                                    WTCException wtcEx2 = new WTCException("failed to rezip" + e2.Message, e2);
                                     throw wtcEx2;
                                 }
                             }
                             catch (Exception e3)
                             {
-                                WTCException wtcEx3 = new WTCException("failed to create backup file", e3);
+                                WTCException wtcEx3 = new WTCException("failed to create backup file" + e3.Message, e3);
                                 throw wtcEx3;
                             }
                         }
-                    }
                 }
 
                 // remove unzipped files and temp folder
@@ -298,14 +375,14 @@ namespace WTC
                 }
                 catch (Exception e5)
                 {
-                    WTCException wtcEx5 = new WTCException("failed to remove temporary unzip directory", e5);
+                    WTCException wtcEx5 = new WTCException("failed to remove temporary unzip directory" + e5.Message, e5);
                     throw wtcEx5;
                 }
 
             }
             catch (Exception e1)
             {
-                WTCException wtcEx1 = new WTCException("failed to unzip document", e1);
+                WTCException wtcEx1 = new WTCException("failed to unzip document: " + e1.Message, e1);
                 throw wtcEx1;
             }
             return changed;

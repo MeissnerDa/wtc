@@ -11,4 +11,7 @@
     <VerifyUploadedFiles>false</VerifyUploadedFiles>
     <ProjectView>ShowAllFiles</ProjectView>
   </PropertyGroup>
+  <PropertyGroup Condition="'$(Configuration)|$(Platform)' == 'Debug|AnyCPU'">
+    <StartArguments>-d C:\root\Projekte\C#\wtc\testfiles -o C:\bbb -n C:\abc</StartArguments>
+  </PropertyGroup>
 </Project>
