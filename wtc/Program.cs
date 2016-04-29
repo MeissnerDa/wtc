@@ -270,14 +270,14 @@ namespace WTC
                                 try
                                 {
                                     changed = false;
-                                    foreach (XmlNode currentNote in nodes)
+                                    foreach (XmlNode currentNode in nodes)
                                     {
-                                        string currentNoteType = currentNote.Attributes["Type"].InnerText;
-                                        string currentNotePath = currentNote.Attributes["Target"].InnerText;
+                                        string currentNodeType = currentNode.Attributes["Type"].InnerText;
+                                        string currentNodePath = currentNode.Attributes["Target"].InnerText;
 
-                                        if (currentNotePath == oldPath && currentNoteType.Contains(templateRelationshipInd))
+                                        if (currentNodePath == oldPath && currentNodeType.Contains(templateRelationshipInd))
                                         {
-                                            currentNote.Attributes["Target"].InnerText = newPath;
+                                            currentNode.Attributes["Target"].InnerText = newPath;
                                             changed = true;
                                         }
                                     }
